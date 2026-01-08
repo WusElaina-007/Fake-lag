@@ -14,50 +14,62 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val dataStore = ConfigDataStore(application)
+    private val configStore = ConfigStore(application)
 
-    val configs: StateFlow<List<NetworkConfig>> = dataStore.configsFlow.stateIn(
+    val configs: StateFlow<List<UltraConfig>> = configStore.configsFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = listOf(NetworkConfig.default()),
+        initialValue = listOf(ConfigStore.defaultConfig()),
     )
 
-    val floatingButtonSize: StateFlow<Float> = dataStore.floatingButtonSizeFlow.stateIn(
+    val floatingScale: StateFlow<Float> = configStore.floatingScaleFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = 56f,
+        initialValue = 1.0f,
+    )
+
+    val graphOverlayEnabled: StateFlow<Boolean> = configStore.graphOverlayFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = true,
     )
 
     private val _editingId = MutableStateFlow<String?>(null)
 
-    var configName by mutableStateOf(NetworkConfig.default().name)
+    var configName by mutableStateOf(ConfigStore.defaultConfig().name)
         private set
 
-    var baseLatency by mutableStateOf(NetworkConfig.default().baseLatencyMs)
+    var latency by mutableStateOf(ConfigStore.defaultConfig().latencyMs)
         private set
 
-    var jitter by mutableStateOf(NetworkConfig.default().jitterMs)
+    var jitter by mutableStateOf(ConfigStore.defaultConfig().jitterMs)
         private set
 
-    var packetLoss by mutableStateOf(NetworkConfig.default().packetLossPercent)
+    var packetLoss by mutableStateOf(ConfigStore.defaultConfig().lossPercent)
         private set
 
-    var uploadKbps by mutableStateOf(NetworkConfig.default().uploadKbps)
+    var uploadKbps by mutableStateOf(ConfigStore.defaultConfig().uploadKbps)
         private set
 
-    var downloadKbps by mutableStateOf(NetworkConfig.default().downloadKbps)
+    var downloadKbps by mutableStateOf(ConfigStore.defaultConfig().downloadKbps)
+        private set
+
+    var importPreview by mutableStateOf<ConfigPayload?>(null)
+        private set
+
+    var importError by mutableStateOf<String?>(null)
         private set
 
     val previewText: String
-        get() = "Latency ${baseLatency}ms ±${jitter}ms, Loss ${packetLoss}%, " +
+        get() = "Latency ${latency}ms ±${jitter}ms, Loss ${packetLoss}%, " +
             "Up ${uploadKbps}kbps / Down ${downloadKbps}kbps"
 
     fun updateConfigName(value: String) {
         configName = value
     }
 
-    fun updateBaseLatency(value: Int) {
-        baseLatency = value
+    fun updateLatency(value: Int) {
+        latency = value
     }
 
     fun updateJitter(value: Int) {
@@ -76,35 +88,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         downloadKbps = value
     }
 
-    fun updateFloatingButtonSize(value: Float) {
+    fun updateFloatingScale(value: Float) {
         viewModelScope.launch {
-            dataStore.saveFloatingButtonSize(configs.value, value)
+            configStore.saveConfigs(configs.value, value, graphOverlayEnabled.value)
         }
     }
 
     fun saveConfig() {
         val id = _editingId.value ?: UUID.randomUUID().toString()
-        val config = NetworkConfig(
+        val config = UltraConfig(
             id = id,
             name = configName.ifBlank { "Config ${configs.value.size + 1}" },
-            baseLatencyMs = baseLatency,
+            latencyMs = latency,
             jitterMs = jitter,
-            packetLossPercent = packetLoss,
+            lossPercent = packetLoss,
             uploadKbps = uploadKbps,
             downloadKbps = downloadKbps,
+            createdAt = System.currentTimeMillis(),
         )
         viewModelScope.launch {
-            dataStore.addOrUpdateConfig(configs.value, config, floatingButtonSize.value)
+            configStore.addOrUpdateConfig(configs.value, config, floatingScale.value, graphOverlayEnabled.value)
         }
         _editingId.value = null
     }
 
-    fun startEdit(config: NetworkConfig) {
+    fun startEdit(config: UltraConfig) {
         _editingId.value = config.id
         configName = config.name
-        baseLatency = config.baseLatencyMs
+        latency = config.latencyMs
         jitter = config.jitterMs
-        packetLoss = config.packetLossPercent
+        packetLoss = config.lossPercent
         uploadKbps = config.uploadKbps
         downloadKbps = config.downloadKbps
         VpnController.updateConfig(config)
@@ -112,15 +125,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteConfig(configId: String) {
         viewModelScope.launch {
-            dataStore.deleteConfig(configs.value, configId, floatingButtonSize.value)
+            configStore.deleteConfig(configs.value, configId, floatingScale.value, graphOverlayEnabled.value)
         }
     }
 
-    fun applyConfig(config: NetworkConfig) {
+    fun applyConfig(config: UltraConfig) {
         configName = config.name
-        baseLatency = config.baseLatencyMs
+        latency = config.latencyMs
         jitter = config.jitterMs
-        packetLoss = config.packetLossPercent
+        packetLoss = config.lossPercent
         uploadKbps = config.uploadKbps
         downloadKbps = config.downloadKbps
         _editingId.value = config.id
@@ -128,21 +141,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun applyCurrentConfig() {
-        val config = NetworkConfig(
+        val config = UltraConfig(
             id = _editingId.value ?: UUID.randomUUID().toString(),
             name = configName.ifBlank { "Live Config" },
-            baseLatencyMs = baseLatency,
+            latencyMs = latency,
             jitterMs = jitter,
-            packetLossPercent = packetLoss,
+            lossPercent = packetLoss,
             uploadKbps = uploadKbps,
             downloadKbps = downloadKbps,
+            createdAt = System.currentTimeMillis(),
         )
         VpnController.updateConfig(config)
     }
 
-    fun pushConfigToVpn(config: NetworkConfig) {
+    fun pushConfigToVpn(config: UltraConfig) {
         getApplication<Application>().startService(
             ConditionerVpnService.createApplyConfigIntent(getApplication(), config),
         )
+    }
+
+    fun setGraphOverlayEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            configStore.saveConfigs(configs.value, floatingScale.value, enabled)
+        }
+    }
+
+    fun updateImportPreview(payload: ConfigPayload?, error: String? = null) {
+        importPreview = payload
+        importError = error
+    }
+
+    fun clearImportPreview() {
+        importPreview = null
+        importError = null
+    }
+
+    fun importPayload(payload: ConfigPayload) {
+        val config = UltraConfig(
+            id = UUID.randomUUID().toString(),
+            name = payload.name,
+            latencyMs = payload.latency,
+            jitterMs = payload.jitter,
+            lossPercent = payload.loss,
+            uploadKbps = payload.uploadKbps,
+            downloadKbps = payload.downloadKbps,
+            createdAt = payload.createdAt,
+        )
+        viewModelScope.launch {
+            configStore.addOrUpdateConfig(configs.value, config, floatingScale.value, graphOverlayEnabled.value)
+        }
+        clearImportPreview()
     }
 }

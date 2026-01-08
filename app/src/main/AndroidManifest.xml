@@ -7,7 +7,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="NetConditionerVPN"
+        android:label="NetConditionerVPN Ultra"
         android:icon="@android:drawable/ic_lock_lock"
         android:roundIcon="@android:drawable/ic_lock_lock"
         android:supportsRtl="true"
@@ -34,6 +34,10 @@
 
         <service
             android:name=".FloatingButtonService"
+            android:exported="false" />
+
+        <service
+            android:name=".OverlayGraphService"
             android:exported="false" />
     </application>
 </manifest>

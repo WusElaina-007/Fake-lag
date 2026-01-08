@@ -23,9 +23,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Power
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -43,11 +44,15 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -55,15 +60,29 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.math.roundToInt
 
 @Composable
-fun MainScreenCompose(
+fun DashboardCompose(
     onRequestVpnStart: () -> Unit,
     onRequestVpnStop: () -> Unit,
     onRequestOverlayPermission: () -> Unit,
+    onRequestExport: () -> Unit,
+    onRequestImport: () -> Unit,
     viewModel: MainViewModel = viewModel(),
 ) {
     val configs by viewModel.configs.collectAsState(initial = emptyList())
     val isRunning by VpnController.isRunning.collectAsState()
-    val floatingSize by viewModel.floatingButtonSize.collectAsState(initial = 56f)
+    val floatingScale by viewModel.floatingScale.collectAsState(initial = 1.0f)
+    val graphEnabled by viewModel.graphOverlayEnabled.collectAsState(initial = true)
+    val importPreview = viewModel.importPreview
+    val importError = viewModel.importError
+    val context = LocalContext.current
+
+    LaunchedEffect(graphEnabled, isRunning) {
+        if (isRunning && graphEnabled) {
+            context.startService(OverlayGraphService.createStartIntent(context))
+        } else {
+            context.startService(OverlayGraphService.createStopIntent(context))
+        }
+    }
 
     val neonGradient = Brush.linearGradient(
         listOf(
@@ -79,24 +98,24 @@ fun MainScreenCompose(
                 .padding(20.dp),
         ) {
             Text(
-                text = "NetConditionerVPN",
+                text = "NetConditionerVPN Ultra",
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                 ),
             )
             Text(
-                text = "Neon network conditioning for your device",
+                text = "Cyber-grade network conditioning",
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
             )
             Spacer(modifier = Modifier.height(16.dp))
 
             Card(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
                 ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(
@@ -105,7 +124,7 @@ fun MainScreenCompose(
                         .padding(16.dp),
                 ) {
                     Text(
-                        text = "Live Config",
+                        text = "Live Conditioning",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
@@ -119,36 +138,40 @@ fun MainScreenCompose(
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    ConfigSlider(
-                        label = "Base Latency",
-                        value = viewModel.baseLatency.toFloat(),
-                        range = 0f..800f,
-                        unit = "ms",
-                        onValueChange = { viewModel.updateBaseLatency(it.roundToInt()) },
-                    )
-                    ConfigSlider(
-                        label = "Jitter",
-                        value = viewModel.jitter.toFloat(),
-                        range = 0f..300f,
-                        unit = "ms",
-                        onValueChange = { viewModel.updateJitter(it.roundToInt()) },
-                    )
-                    ConfigSlider(
-                        label = "Packet Loss",
-                        value = viewModel.packetLoss.toFloat(),
-                        range = 0f..30f,
-                        unit = "%",
-                        onValueChange = { viewModel.updatePacketLoss(it.roundToInt()) },
-                    )
-                    ConfigSlider(
-                        label = "Upload speed",
+                    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                        CircularSlider(
+                            label = "Latency",
+                            value = viewModel.latency.toFloat(),
+                            range = 0f..800f,
+                            unit = "ms",
+                            onValueChange = { viewModel.updateLatency(it.roundToInt()) },
+                        )
+                        CircularSlider(
+                            label = "Jitter",
+                            value = viewModel.jitter.toFloat(),
+                            range = 0f..300f,
+                            unit = "ms",
+                            onValueChange = { viewModel.updateJitter(it.roundToInt()) },
+                        )
+                        CircularSlider(
+                            label = "Loss",
+                            value = viewModel.packetLoss.toFloat(),
+                            range = 0f..30f,
+                            unit = "%",
+                            onValueChange = { viewModel.updatePacketLoss(it.roundToInt()) },
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LinearControl(
+                        label = "Upload throttle",
                         value = viewModel.uploadKbps.toFloat(),
                         range = 128f..20000f,
                         unit = "kbps",
                         onValueChange = { viewModel.updateUpload(it.roundToInt()) },
                     )
-                    ConfigSlider(
-                        label = "Download speed",
+                    LinearControl(
+                        label = "Download throttle",
                         value = viewModel.downloadKbps.toFloat(),
                         range = 128f..50000f,
                         unit = "kbps",
@@ -163,7 +186,7 @@ fun MainScreenCompose(
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(
                             onClick = { viewModel.saveConfig() },
                             colors = ButtonDefaults.buttonColors(
@@ -173,45 +196,82 @@ fun MainScreenCompose(
                         ) {
                             Icon(Icons.Filled.Save, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Save Config")
+                            Text("Save")
+                        }
+                        Button(
+                            onClick = onRequestExport,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1C2533)),
+                        ) {
+                            Icon(Icons.Filled.FileDownload, contentDescription = null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Export")
+                        }
+                        Button(
+                            onClick = onRequestImport,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1C2533)),
+                        ) {
+                            Icon(Icons.Filled.FileUpload, contentDescription = null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Import")
                         }
                         Button(
                             onClick = {
                                 viewModel.applyCurrentConfig()
                                 onRequestVpnStart()
                             },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.secondary,
-                                contentColor = MaterialTheme.colorScheme.onSecondary,
-                            ),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
                         ) {
-                            Icon(Icons.Filled.Power, contentDescription = null)
+                            Icon(Icons.Filled.PlayArrow, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Start VPN")
+                            Text("Start")
                         }
                         TextButton(onClick = onRequestVpnStop) {
                             Icon(Icons.Outlined.StopCircle, contentDescription = null)
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Stop VPN")
+                            Text("Stop")
                         }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Filled.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Floating button size (${floatingSize.roundToInt()}dp)")
-                    }
+                    Text("Floating button scale (${String.format("%.2f", floatingScale)}x)")
                     Slider(
-                        value = floatingSize,
-                        onValueChange = { viewModel.updateFloatingButtonSize(it) },
-                        valueRange = 40f..96f,
+                        value = floatingScale,
+                        onValueChange = { viewModel.updateFloatingScale(it) },
+                        valueRange = 0.6f..1.6f,
+                    )
+                    Text("Overlay graph ${if (graphEnabled) "enabled" else "disabled"}")
+                    Slider(
+                        value = if (graphEnabled) 1f else 0f,
+                        onValueChange = { viewModel.setGraphOverlayEnabled(it > 0.5f) },
+                        valueRange = 0f..1f,
                     )
                     TextButton(onClick = onRequestOverlayPermission) {
                         Text("Grant overlay permission")
+                    }
+                }
+            }
+
+            AnimatedVisibility(visible = importPreview != null || importError != null) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Import Preview", style = MaterialTheme.typography.titleSmall)
+                        if (importError != null) {
+                            Text(importError, color = Color(0xFFFF6F91))
+                            TextButton(onClick = viewModel::clearImportPreview) { Text("Dismiss") }
+                        } else if (importPreview != null) {
+                            Text("Name: ${importPreview.name}")
+                            Text("Latency ${importPreview.latency}ms • Jitter ${importPreview.jitter}ms • Loss ${importPreview.loss}%")
+                            Text("Up ${importPreview.uploadKbps}kbps / Down ${importPreview.downloadKbps}kbps")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { viewModel.importPayload(importPreview) }) { Text("Import") }
+                                TextButton(onClick = viewModel::clearImportPreview) { Text("Cancel") }
+                            }
+                        }
                     }
                 }
             }
@@ -222,7 +282,6 @@ fun MainScreenCompose(
                 style = MaterialTheme.typography.titleMedium,
             )
 
-            val listAlpha by animateFloatAsState(if (configs.isNotEmpty()) 1f else 0.6f, label = "listAlpha")
             AnimatedVisibility(
                 visible = configs.isNotEmpty(),
                 enter = fadeIn(),
@@ -285,13 +344,14 @@ fun MainScreenCompose(
 }
 
 @Composable
-private fun ConfigSlider(
+private fun LinearControl(
     label: String,
     value: Float,
     range: ClosedFloatingPointRange<Float>,
     unit: String,
     onValueChange: (Float) -> Unit,
 ) {
+    val haptics = LocalHapticFeedback.current
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -300,13 +360,55 @@ private fun ConfigSlider(
             Text(label)
             Text("${value.roundToInt()} $unit", color = MaterialTheme.colorScheme.primary)
         }
-        Slider(value = value, onValueChange = onValueChange, valueRange = range)
+        Slider(
+            value = value,
+            onValueChange = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onValueChange(it)
+            },
+            valueRange = range,
+        )
+    }
+}
+
+@Composable
+private fun CircularSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    unit: String,
+    onValueChange: (Float) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    val animatedValue by animateFloatAsState(value, label = "circle")
+    Card(
+        modifier = Modifier.size(110.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(label, fontSize = 12.sp)
+            Text("${animatedValue.roundToInt()} $unit", color = MaterialTheme.colorScheme.primary)
+            Slider(
+                value = value,
+                onValueChange = {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onValueChange(it)
+                },
+                valueRange = range,
+                modifier = Modifier.height(32.dp),
+            )
+        }
     }
 }
 
 @Composable
 private fun ConfigRow(
-    config: NetworkConfig,
+    config: UltraConfig,
     isActive: Boolean,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -337,7 +439,7 @@ private fun ConfigRow(
             }
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "${config.baseLatencyMs}ms ±${config.jitterMs}ms • Loss ${config.packetLossPercent}% • " +
+                text = "${config.latencyMs}ms ±${config.jitterMs}ms • Loss ${config.lossPercent}% • " +
                     "Up ${config.uploadKbps}kbps / Down ${config.downloadKbps}kbps",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                 fontSize = 13.sp,

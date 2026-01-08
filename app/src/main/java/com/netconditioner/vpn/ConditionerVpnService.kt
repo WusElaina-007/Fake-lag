@@ -16,8 +16,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -27,20 +28,23 @@ class ConditionerVpnService : VpnService() {
     private var tunInterface: ParcelFileDescriptor? = null
     private var processorJob: Job? = null
 
-    private val configFlow = MutableStateFlow(NetworkConfig.default())
+    private val configFlow = MutableStateFlow(ConfigStore.defaultConfig())
+    private val metricsCollector = MetricsCollector()
+    private val configSnapshot = ConfigSnapshot { configFlow.value }
+    private val configStore by lazy { ConfigStore(applicationContext) }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
                 val config = intent.getStringExtra(EXTRA_CONFIG_JSON)?.let {
-                    runCatching { Json.decodeFromString(NetworkConfig.serializer(), it) }.getOrNull()
-                } ?: NetworkConfig.default()
+                    runCatching { Json.decodeFromString(UltraConfig.serializer(), it) }.getOrNull()
+                } ?: ConfigStore.defaultConfig()
                 startVpn(config)
             }
             ACTION_STOP -> stopVpn()
             ACTION_APPLY_CONFIG -> {
                 val config = intent.getStringExtra(EXTRA_CONFIG_JSON)?.let {
-                    runCatching { Json.decodeFromString(NetworkConfig.serializer(), it) }.getOrNull()
+                    runCatching { Json.decodeFromString(UltraConfig.serializer(), it) }.getOrNull()
                 }
                 config?.let { updateConfig(it) }
             }
@@ -53,12 +57,12 @@ class ConditionerVpnService : VpnService() {
         super.onDestroy()
     }
 
-    private fun startVpn(config: NetworkConfig) {
+    private fun startVpn(config: UltraConfig) {
         updateConfig(config)
         if (tunInterface != null) return
 
         tunInterface = Builder()
-            .setSession("NetConditionerVPN")
+            .setSession("NetConditionerVPN Ultra")
             .setMtu(1500)
             .addAddress("10.0.0.2", 24)
             .addRoute("0.0.0.0", 0)
@@ -73,14 +77,29 @@ class ConditionerVpnService : VpnService() {
         startForeground(NOTIFICATION_ID, buildNotification())
         VpnController.updateRunning(true)
         startService(FloatingButtonService.createStartIntent(this))
+        scope.launch {
+            if (configStore.graphOverlayFlow.first()) {
+                startService(OverlayGraphService.createStartIntent(this@ConditionerVpnService))
+            } else {
+                startService(OverlayGraphService.createStopIntent(this@ConditionerVpnService))
+            }
+        }
 
         processorJob = scope.launch {
-            val processor = PacketProcessor(configFlow)
-            processor.start(tunInterface!!)
+            val loop = PacketLoop(configSnapshot, metricsCollector)
+            loop.start(this, tunInterface!!)
+        }
+
+        scope.launch {
+            while (true) {
+                delay(33)
+                metricsCollector.snapshotAndReset(33)
+                MetricsBus.publish(metricsCollector.snapshot.value)
+            }
         }
     }
 
-    private fun updateConfig(config: NetworkConfig) {
+    private fun updateConfig(config: UltraConfig) {
         configFlow.value = config
         VpnController.updateConfig(config)
     }
@@ -94,6 +113,7 @@ class ConditionerVpnService : VpnService() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopService(FloatingButtonService.createStopIntent(this))
+        stopService(OverlayGraphService.createStopIntent(this))
         VpnController.updateRunning(false)
         stopSelf()
     }
@@ -118,8 +138,8 @@ class ConditionerVpnService : VpnService() {
         )
 
         return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("NetConditionerVPN running")
-            .setContentText("Conditioning traffic with live profile")
+            .setContentTitle("NetConditionerVPN Ultra running")
+            .setContentText("Conditioning traffic with ultra profile")
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -134,10 +154,10 @@ class ConditionerVpnService : VpnService() {
         private const val ACTION_APPLY_CONFIG = "com.netconditioner.vpn.action.APPLY_CONFIG"
         private const val EXTRA_CONFIG_JSON = "extra_config_json"
 
-        fun createStartIntent(context: Context, config: NetworkConfig): Intent {
+        fun createStartIntent(context: Context, config: UltraConfig): Intent {
             return Intent(context, ConditionerVpnService::class.java).apply {
                 action = ACTION_START
-                putExtra(EXTRA_CONFIG_JSON, Json.encodeToString(NetworkConfig.serializer(), config))
+                putExtra(EXTRA_CONFIG_JSON, Json.encodeToString(UltraConfig.serializer(), config))
             }
         }
 
@@ -147,14 +167,10 @@ class ConditionerVpnService : VpnService() {
             }
         }
 
-        fun pushConfig(config: NetworkConfig) {
-            VpnController.updateConfig(config)
-        }
-
-        fun createApplyConfigIntent(context: Context, config: NetworkConfig): Intent {
+        fun createApplyConfigIntent(context: Context, config: UltraConfig): Intent {
             return Intent(context, ConditionerVpnService::class.java).apply {
                 action = ACTION_APPLY_CONFIG
-                putExtra(EXTRA_CONFIG_JSON, Json.encodeToString(NetworkConfig.serializer(), config))
+                putExtra(EXTRA_CONFIG_JSON, Json.encodeToString(UltraConfig.serializer(), config))
             }
         }
     }

@@ -1,2 +1,2 @@
-rootProject.name = "NetConditionerVPN"
+rootProject.name = "NetConditionerVPN-Ultra"
 include(":app")

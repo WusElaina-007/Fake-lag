@@ -8,8 +8,8 @@ object VpnController {
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning
 
-    private val _currentConfig = MutableStateFlow(NetworkConfig.default())
-    val currentConfig: StateFlow<NetworkConfig> = _currentConfig
+    private val _currentConfig = MutableStateFlow(ConfigStore.defaultConfig())
+    val currentConfig: StateFlow<UltraConfig> = _currentConfig
 
     private var appContext: Context? = null
 
@@ -21,7 +21,7 @@ object VpnController {
         _isRunning.value = running
     }
 
-    fun updateConfig(config: NetworkConfig) {
+    fun updateConfig(config: UltraConfig) {
         _currentConfig.value = config
     }
 }

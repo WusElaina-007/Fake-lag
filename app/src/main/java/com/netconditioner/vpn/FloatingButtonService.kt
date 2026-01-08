@@ -10,8 +10,8 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import androidx.compose.foundation.background
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,12 +45,10 @@ class FloatingButtonService : Service() {
     private val overlayScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var overlayView: View? = null
-    private var menuView: View? = null
     private var layoutParams: WindowManager.LayoutParams? = null
-    private var menuLayoutParams: WindowManager.LayoutParams? = null
 
-    private val configsFlow = MutableStateFlow(listOf(NetworkConfig.default()))
-    private val floatingSizeFlow = MutableStateFlow(56f)
+    private val configsFlow = MutableStateFlow(listOf(ConfigStore.defaultConfig()))
+    private val floatingScaleFlow = MutableStateFlow(1.0f)
     private val menuVisible = MutableStateFlow(false)
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -59,7 +57,6 @@ class FloatingButtonService : Service() {
         when (intent?.action) {
             ACTION_START -> showOverlay()
             ACTION_STOP -> stopSelf()
-            ACTION_TOGGLE_MENU -> toggleMenu()
         }
         return START_STICKY
     }
@@ -103,21 +100,19 @@ class FloatingButtonService : Service() {
 
     private fun observeDataStore() {
         overlayScope.launch {
-            val store = ConfigDataStore(applicationContext)
+            val store = ConfigStore(applicationContext)
             launch {
                 store.configsFlow.collectLatest { configsFlow.value = it }
             }
             launch {
-                store.floatingButtonSizeFlow.collectLatest { floatingSizeFlow.value = it }
+                store.floatingScaleFlow.collectLatest { floatingScaleFlow.value = it }
             }
         }
     }
 
     private fun removeOverlay() {
         overlayView?.let { windowManager.removeView(it) }
-        menuView?.let { windowManager.removeView(it) }
         overlayView = null
-        menuView = null
     }
 
     private fun attachDragListener(view: View, params: WindowManager.LayoutParams) {
@@ -139,10 +134,11 @@ class FloatingButtonService : Service() {
                     params.x = initialX + (event.rawX - initialTouchX).toInt()
                     params.y = initialY + (event.rawY - initialTouchY).toInt()
                     windowManager.updateViewLayout(view, params)
-                    menuLayoutParams?.let { menuParams ->
-                        menuParams.x = params.x
-                        menuParams.y = params.y + 120
-                        menuView?.let { windowManager.updateViewLayout(it, menuParams) }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (kotlin.math.abs(event.rawX - initialTouchX) > 180) {
+                        menuVisible.value = false
                     }
                     true
                 }
@@ -151,57 +147,19 @@ class FloatingButtonService : Service() {
         }
     }
 
-    private fun toggleMenu() {
-        menuVisible.value = !menuVisible.value
-        if (menuVisible.value) {
-            showMenu()
-        } else {
-            removeMenu()
-        }
-    }
-
-    private fun showMenu() {
-        if (menuView != null) return
-        val composeView = ComposeView(this)
-        composeView.setContent {
-            NetConditionerTheme {
-                FloatingMenuContent()
-            }
-        }
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = layoutParams?.x ?: 40
-            y = (layoutParams?.y ?: 300) + 120
-        }
-        menuLayoutParams = params
-        menuView = composeView
-        windowManager.addView(composeView, params)
-    }
-
-    private fun removeMenu() {
-        menuView?.let { windowManager.removeView(it) }
-        menuView = null
-        menuLayoutParams = null
-    }
-
     @OptIn(ExperimentalFoundationApi::class)
     @Composable
     private fun FloatingButtonContent() {
-        val sizeDp by floatingSizeFlow.collectAsState()
+        val configs by configsFlow.collectAsState()
+        val scale by floatingScaleFlow.collectAsState()
         val activeConfig by VpnController.currentConfig.collectAsState()
         val running by VpnController.isRunning.collectAsState()
+        val menuOpen by menuVisible.collectAsState()
 
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
                 modifier = Modifier
-                    .size(sizeDp.dp)
+                    .size((56 * scale).dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
                     .combinedClickable(
@@ -217,7 +175,7 @@ class FloatingButtonService : Service() {
                                 )
                             }
                         },
-                        onLongClick = { toggleMenu() },
+                        onLongClick = { menuVisible.value = !menuOpen },
                     ),
                 contentAlignment = Alignment.Center,
             ) {
@@ -234,31 +192,22 @@ class FloatingButtonService : Service() {
                     .background(Color(0x99000000), shape = CircleShape)
                     .padding(horizontal = 8.dp, vertical = 2.dp),
             )
-        }
-    }
 
-    @Composable
-    private fun FloatingMenuContent() {
-        val configs by configsFlow.collectAsState()
-        val activeConfig by VpnController.currentConfig.collectAsState()
-
-        FloatingMenuCompose(
-            visible = true,
-            configs = configs,
-            activeConfigId = activeConfig.id,
-            onConfigSelected = { config ->
+            RadialMenuCompose(
+                visible = menuOpen,
+                configs = configs,
+                activeConfigId = activeConfig.id,
+            ) { config ->
                 VpnController.updateConfig(config)
-                startService(ConditionerVpnService.createApplyConfigIntent(this, config))
+                startService(ConditionerVpnService.createApplyConfigIntent(this@FloatingButtonService, config))
                 menuVisible.value = false
-                removeMenu()
-            },
-        )
+            }
+        }
     }
 
     companion object {
         private const val ACTION_START = "com.netconditioner.vpn.action.FLOATING_START"
         private const val ACTION_STOP = "com.netconditioner.vpn.action.FLOATING_STOP"
-        private const val ACTION_TOGGLE_MENU = "com.netconditioner.vpn.action.FLOATING_MENU"
 
         fun createStartIntent(context: Context): Intent {
             return Intent(context, FloatingButtonService::class.java).apply {
